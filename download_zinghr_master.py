@@ -25,7 +25,7 @@ LOCAL_FILE_PATH = os.path.join(DOWNLOAD_DIR, "Super_Employee_Master.xlsx")
 LOGIN_URL = "https://portal.zinghr.com/2015/pages/authentication/login.aspx"
 
 def download_from_zinghr():
-    print(f"Navigating to ZingHR classic portal: {LOGIN_URL}")
+    print(f"Navigating to ZingHR portal login: {LOGIN_URL}")
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
@@ -34,84 +34,111 @@ def download_from_zinghr():
         )
         page = context.new_page()
 
-        # 1. Open Portal Login
+        # 1. Login sequence
         page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(3000)
 
-        # 2. Company Code
         if page.is_visible("input[id*='txtCompanyCode'], input[name*='CompanyCode']"):
             print("Entering Company Code...")
             page.fill("input[id*='txtCompanyCode'], input[name*='CompanyCode']", ZING_COMPANY_CODE)
 
-        # 3. Employee Code / Username
         print("Entering Employee Code / Username...")
         page.fill("input[id*='txtEmpCode'], input[id*='txtUserName'], input[name*='UserName']", ZING_USERNAME)
 
-        # 4. Password
         print("Entering Password...")
         pwd_field = page.locator("input[id*='txtPassword'], input[type='password']").first
         pwd_field.fill(ZING_PASSWORD)
 
-        # 5. Submit Login via Enter key
-        print("Submitting login credentials via Enter key...")
+        print("Submitting login credentials...")
         try:
             pwd_field.press("Enter")
         except Exception:
-            page.click("a[id*='Login'], a[id*='btn'], input[type='submit'], button[type='submit'], .login-btn", timeout=10000)
+            page.click("a[id*='Login'], a[id*='btn'], input[type='submit'], button[type='submit']", timeout=10000)
 
         page.wait_for_load_state("domcontentloaded", timeout=60000)
         page.wait_for_timeout(6000)
-        print("Authentication processed.")
+        print("Login complete.")
 
-        # 6. Open 9-Dots / App Launcher Menu
-        print("Opening 9-dots App Launcher menu...")
-        nine_dots = "button[class*='app-launcher'], .waffle-icon, [title*='Apps'], .fa-th, i[class*='th'], div[class*='launcher'], a[class*='launcher']"
-        page.click(nine_dots, timeout=30000)
-        page.wait_for_timeout(2000)
-
-        # 7. Select Reports Gallery
-        print("Opening Reports Gallery...")
-        page.click("text='Reports Gallery' >> visible=true, a:has-text('Reports Gallery')", timeout=20000)
-        page.wait_for_load_state("domcontentloaded", timeout=45000)
+        # 2. Direct jump to Reports Gallery (Bypasses the 9-dots menu)
+        reports_view_url = "https://portal.zinghr.com/2015/Pages/ReportsGallery/ReportsView.aspx"
+        print(f"Navigating directly to Reports Gallery: {reports_view_url}")
+        page.goto(reports_view_url, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(4000)
 
-        # 8. Switch to 'Current Data' tab
-        print("Selecting 'Current Data' tab...")
-        current_data_tab = "text='Current Data' >> visible=true, a:has-text('Current Data')"
+        # 3. Ensure 'Current Data' tab is active & search/select 'Super Employee Master'
+        print("Ensuring 'Current Data' tab is selected...")
+        current_data_tab = "a:has-text('Current Data'), text='Current Data'"
         if page.is_visible(current_data_tab):
             page.click(current_data_tab)
             page.wait_for_timeout(2000)
 
-        # 9. Search for 'Super Employee Master'
-        print("Searching for 'Super Employee Master'...")
-        search_input = "input[placeholder*='Search'], input[type='search'], input[id*='search'], input[class*='search']"
-        page.fill(search_input, "Super Employee Master")
-        page.press(search_input, "Enter")
+        print("Selecting 'Super Employee Master' from left menu...")
+        # Match the exact text block from the sidebar
+        super_emp_item = "text='Super Employee Master' >> visible=true"
+        page.wait_for_selector(super_emp_item, timeout=30000)
+        page.click(super_emp_item)
         page.wait_for_timeout(3000)
 
-        # 10. Trigger Report Generation / Export
-        print("Triggering report generation...")
-        generate_btn = "button:has-text('Generate'), a:has-text('Generate'), button:has-text('Export'), a:has-text('Export'), .export-btn"
-        page.click(generate_btn, timeout=20000)
+        # 4. Trigger Report Generation ("Export to Excel" button)
+        print("Clicking 'Export to Excel' button...")
+        export_btn = "button:has-text('Export to Excel'), input[value*='Export to Excel'], a:has-text('Export to Excel'), #btnExport"
+        page.wait_for_selector(export_btn, timeout=30000)
+        page.click(export_btn)
         page.wait_for_timeout(5000)
+        print("Report generation requested successfully.")
 
-        # 11. Switch to 'Processed' / 'Saved Reports' Tab
-        print("Switching to Processed / Saved Reports queue...")
-        processed_tab = "text='Processed' >> visible=true, text='Saved Reports' >> visible=true, a:has-text('Processed'), a:has-text('Saved Reports')"
-        page.click(processed_tab, timeout=20000)
-        page.wait_for_timeout(6000)
+        # 5. Switch to 'Processed Saved Reports (All)' tab
+        print("Switching to 'Processed Saved Reports' queue...")
+        processed_tab = "a:has-text('Processed Saved Reports'), text='Processed Saved Reports'"
+        page.wait_for_selector(processed_tab, timeout=30000)
+        page.click(processed_tab)
+        page.wait_for_timeout(4000)
 
-        # 12. Poll & Download Completed Report
-        print("Polling for active download button...")
-        download_btn = "table tr:first-child a[title*='Download'], table tr:first-child i[class*='download'], table tr:first-child button[title*='Download'], table tr:first-child a:has-text('Download')"
+        # 6. Polling loop: Wait up to 7 minutes (420s) for the download arrow icon to appear
+        print("Waiting for report processing to complete (monitoring queue for up to 7 minutes)...")
+        max_wait_seconds = 420
+        poll_interval = 20
+        elapsed = 0
+        download_ready = False
 
+        # Selector for the active download arrow in the first row
+        download_icon_selector = "table tbody tr:first-child a[title*='Download'], table tbody tr:first-child i[class*='download'], table tbody tr:first-child span[class*='download'], table tbody tr:first-child a:has(i), table tbody tr:first-child td:nth-child(5) a"
+
+        while elapsed < max_wait_seconds:
+            # Check if the download icon is present and clickable in row 1
+            if page.is_visible(download_icon_selector):
+                # Verify that it is not still showing the spinner/loader
+                row_text = page.locator("table tbody tr:first-child").inner_text()
+                if "xlsx" in row_text.lower() and not ("error" in row_text.lower()):
+                    print(f"Download icon is ready! (Elapsed: {elapsed} seconds)")
+                    download_ready = True
+                    break
+
+            print(f"Still processing... ({elapsed}s / {max_wait_seconds}s). Refreshing Processed queue...")
+            page.wait_for_timeout(poll_interval * 1000)
+            elapsed += poll_interval
+
+            # Re-click the tab or refresh the table view to poll the latest status
+            try:
+                page.click(processed_tab)
+            except Exception:
+                page.reload(wait_until="domcontentloaded")
+                page.wait_for_timeout(3000)
+                page.click(processed_tab)
+
+        if not download_ready:
+            # Take screenshot for diagnosis if it didn't finish in 7 mins
+            page.screenshot(path="downloads/timeout_queue.png")
+            raise TimeoutError("Report did not finish processing within 7 minutes.")
+
+        # 7. Download the ready file
+        print("Triggering download from the first row...")
         with page.expect_download(timeout=180000) as download_info:
-            page.wait_for_selector(download_btn, timeout=120000)
-            page.click(download_btn)
+            page.click(download_icon_selector)
 
         download = download_info.value
         download.save_as(LOCAL_FILE_PATH)
-        print(f"Super Employee Master successfully downloaded to: {LOCAL_FILE_PATH}")
+        print(f"File successfully downloaded and saved to: {LOCAL_FILE_PATH}")
         browser.close()
 
 def upload_to_google_drive():
