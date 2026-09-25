@@ -38,12 +38,12 @@ def download_from_zinghr():
         page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(3000)
 
-        if page.is_visible("input[id*='txtCompanyCode'], input[name*='CompanyCode']"):
+        if page.locator("input[id*='txtCompanyCode'], input[name*='CompanyCode']").is_visible():
             print("Entering Company Code...")
-            page.fill("input[id*='txtCompanyCode'], input[name*='CompanyCode']", ZING_COMPANY_CODE)
+            page.locator("input[id*='txtCompanyCode'], input[name*='CompanyCode']").fill(ZING_COMPANY_CODE)
 
         print("Entering Employee Code / Username...")
-        page.fill("input[id*='txtEmpCode'], input[id*='txtUserName'], input[name*='UserName']", ZING_USERNAME)
+        page.locator("input[id*='txtEmpCode'], input[id*='txtUserName'], input[name*='UserName']").first.fill(ZING_USERNAME)
 
         print("Entering Password...")
         pwd_field = page.locator("input[id*='txtPassword'], input[type='password']").first
@@ -53,63 +53,61 @@ def download_from_zinghr():
         try:
             pwd_field.press("Enter")
         except Exception:
-            page.click("a[id*='Login'], a[id*='btn'], input[type='submit'], button[type='submit']", timeout=10000)
+            page.locator("a[id*='Login'], a[id*='btn'], input[type='submit'], button[type='submit']").first.click(timeout=10000)
 
         page.wait_for_load_state("domcontentloaded", timeout=60000)
         page.wait_for_timeout(6000)
         print("Login complete.")
 
-        # 2. Direct jump to Reports Gallery (Bypasses the 9-dots menu)
+        # 2. Direct jump to Reports Gallery
         reports_view_url = "https://portal.zinghr.com/2015/Pages/ReportsGallery/ReportsView.aspx"
         print(f"Navigating directly to Reports Gallery: {reports_view_url}")
         page.goto(reports_view_url, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(4000)
+        page.wait_for_timeout(5000)
 
-        # 3. Ensure 'Current Data' tab is active & search/select 'Super Employee Master'
+        # 3. Ensure 'Current Data' tab is active
         print("Ensuring 'Current Data' tab is selected...")
-        current_data_tab = "a:has-text('Current Data'), text='Current Data'"
-        if page.is_visible(current_data_tab):
-            page.click(current_data_tab)
+        current_data_tab = page.get_by_text("Current Data", exact=False).first
+        if current_data_tab.is_visible():
+            current_data_tab.click()
             page.wait_for_timeout(2000)
 
+        # 4. Select 'Super Employee Master' from left menu
         print("Selecting 'Super Employee Master' from left menu...")
-        # Match the exact text block from the sidebar
-        super_emp_item = "text='Super Employee Master' >> visible=true"
-        page.wait_for_selector(super_emp_item, timeout=30000)
-        page.click(super_emp_item)
+        super_emp_item = page.get_by_text("Super Employee Master", exact=True).first
+        super_emp_item.wait_for(state="visible", timeout=30000)
+        super_emp_item.click()
         page.wait_for_timeout(3000)
 
-        # 4. Trigger Report Generation ("Export to Excel" button)
+        # 5. Trigger Report Generation ("Export to Excel" button)
         print("Clicking 'Export to Excel' button...")
-        export_btn = "button:has-text('Export to Excel'), input[value*='Export to Excel'], a:has-text('Export to Excel'), #btnExport"
-        page.wait_for_selector(export_btn, timeout=30000)
-        page.click(export_btn)
+        export_btn = page.locator("#btnExport, button:has-text('Export to Excel'), input[value*='Export to Excel'], a:has-text('Export to Excel')").first
+        export_btn.wait_for(state="visible", timeout=30000)
+        export_btn.click()
         page.wait_for_timeout(5000)
         print("Report generation requested successfully.")
 
-        # 5. Switch to 'Processed Saved Reports (All)' tab
+        # 6. Switch to 'Processed Saved Reports' tab
         print("Switching to 'Processed Saved Reports' queue...")
-        processed_tab = "a:has-text('Processed Saved Reports'), text='Processed Saved Reports'"
-        page.wait_for_selector(processed_tab, timeout=30000)
-        page.click(processed_tab)
-        page.wait_for_timeout(4000)
+        processed_tab = page.get_by_text("Processed Saved Reports", exact=False).first
+        processed_tab.wait_for(state="visible", timeout=30000)
+        processed_tab.click()
+        page.wait_for_timeout(5000)
 
-        # 6. Polling loop: Wait up to 7 minutes (420s) for the download arrow icon to appear
+        # 7. Polling loop: Wait up to 7 minutes (420s) for the download arrow icon
         print("Waiting for report processing to complete (monitoring queue for up to 7 minutes)...")
         max_wait_seconds = 420
         poll_interval = 20
         elapsed = 0
         download_ready = False
 
-        # Selector for the active download arrow in the first row
-        download_icon_selector = "table tbody tr:first-child a[title*='Download'], table tbody tr:first-child i[class*='download'], table tbody tr:first-child span[class*='download'], table tbody tr:first-child a:has(i), table tbody tr:first-child td:nth-child(5) a"
+        # Selector for the download arrow in the table
+        download_icon = page.locator("table tbody tr:first-child a[title*='Download'], table tbody tr:first-child i[class*='download'], table tbody tr:first-child span[class*='download'], table tbody tr:first-child a:has(i), table tbody tr:first-child td:nth-child(5) a").first
 
         while elapsed < max_wait_seconds:
-            # Check if the download icon is present and clickable in row 1
-            if page.is_visible(download_icon_selector):
-                # Verify that it is not still showing the spinner/loader
+            if download_icon.is_visible():
                 row_text = page.locator("table tbody tr:first-child").inner_text()
-                if "xlsx" in row_text.lower() and not ("error" in row_text.lower()):
+                if "xlsx" in row_text.lower() and "error" not in row_text.lower():
                     print(f"Download icon is ready! (Elapsed: {elapsed} seconds)")
                     download_ready = True
                     break
@@ -118,23 +116,23 @@ def download_from_zinghr():
             page.wait_for_timeout(poll_interval * 1000)
             elapsed += poll_interval
 
-            # Re-click the tab or refresh the table view to poll the latest status
+            # Re-click the tab or refresh view to poll the latest status
             try:
-                page.click(processed_tab)
+                processed_tab.click()
             except Exception:
                 page.reload(wait_until="domcontentloaded")
                 page.wait_for_timeout(3000)
-                page.click(processed_tab)
+                processed_tab = page.get_by_text("Processed Saved Reports", exact=False).first
+                processed_tab.click()
 
         if not download_ready:
-            # Take screenshot for diagnosis if it didn't finish in 7 mins
             page.screenshot(path="downloads/timeout_queue.png")
             raise TimeoutError("Report did not finish processing within 7 minutes.")
 
-        # 7. Download the ready file
+        # 8. Download the ready file
         print("Triggering download from the first row...")
         with page.expect_download(timeout=180000) as download_info:
-            page.click(download_icon_selector)
+            download_icon.click()
 
         download = download_info.value
         download.save_as(LOCAL_FILE_PATH)
