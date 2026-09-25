@@ -1,33 +1,40 @@
 name: Daily ZingHR Super Employee Master Download
 
 on:
+  workflow_dispatch: # Allows manual trigger from GitHub UI
   schedule:
-    # 03:30 UTC = 09:00 AM IST
-    - cron: '30 3 * * *'
-  workflow_dispatch: # Allows manual trigger anytime from GitHub Actions tab
+    - cron: '30 4 * * *' # Example: runs daily at 10:00 AM IST
 
 jobs:
-  export-and-upload:
+  download-master:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-    - name: Install Dependencies
-      run: |
-        pip install playwright google-api-python-client google-auth
-        playwright install chromium --with-deps
+      - name: Install dependencies & Playwright Chromium
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
 
-    - name: Run Download and Drive Upload
-      env:
-        ZING_COMPANY_CODE: ${{ secrets.ZING_COMPANY_CODE }}
-        ZING_USERNAME: ${{ secrets.ZING_USERNAME }}
-        ZING_PASSWORD: ${{ secrets.ZING_PASSWORD }}
-        GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
-      run: python download_zinghr_master.py
+      - name: Run ZingHR Downloader
+        env:
+          PYTHONUNBUFFERED: "1"
+          ZING_COMPANY_CODE: ${{ secrets.ZING_COMPANY_CODE }}
+          ZING_USERNAME: ${{ secrets.ZING_USERNAME }}
+          ZING_PASSWORD: ${{ secrets.ZING_PASSWORD }}
+          LOCAL_FILE_PATH: "downloads/Super_Employee_Master.xlsx"
+        run: python -u download_zinghr_master.py
+
+      - name: Upload Downloaded File as Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zinghr-super-employee-master
+          path: downloads/
