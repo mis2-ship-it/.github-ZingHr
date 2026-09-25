@@ -3,7 +3,6 @@ import sys
 import time
 from playwright.sync_api import sync_playwright
 
-# Force standard output to flush immediately on GitHub Actions
 def log(msg):
     print(msg, flush=True)
 
@@ -15,42 +14,43 @@ LOGIN_URL = "https://portal.zinghr.com/2015/pages/authentication/login.aspx"
 REPORTS_VIEW_URL = "https://portal.zinghr.com/2015/Pages/ReportsGallery/ReportsView.aspx"
 LOCAL_FILE_PATH = os.environ.get("LOCAL_FILE_PATH", "downloads/Super_Employee_Master.xlsx")
 
-
 def ensure_output_dir(file_path):
     directory = os.path.dirname(file_path)
     if directory and not os.path.exists(directory):
         os.makedirs(directory, exist_ok=True)
 
-
-def get_active_reports_frame(page):
-    for frame in page.frames:
+def find_reports_frame(page):
+    """Deeply inspects main page and all frames/iframes."""
+    frames_to_check = page.frames
+    log(f"Total frames detected on page: {len(frames_to_check)}")
+    
+    for i, frame in enumerate(frames_to_check):
         try:
-            has_reports = frame.evaluate("""() => {
-                const text = document.body ? document.body.innerText : '';
-                return text.includes('Reports Gallery') || 
-                       text.includes('Current Data') || 
-                       text.includes('Employee MIS') ||
-                       text.includes('Super Employee Master');
-            }""")
-            if has_reports:
-                log(f"Target working frame identified: {frame.name or frame.url}")
+            url = frame.url
+            name = frame.name
+            body_text = frame.evaluate("() => document.body ? document.body.innerText : ''")
+            log(f"Frame #{i} [{name}] URL: {url[:60]}... Text length: {len(body_text)}")
+            
+            # Check for signatures of ZingHR Reports Gallery
+            if any(k in body_text for k in ["Employee MIS", "Super Employee Master", "Current Data", "Reports Gallery", "Reports"]):
+                log(f"==> MATCH FOUND in Frame #{i} ({name or url})")
                 return frame
-        except Exception:
+        except Exception as e:
+            log(f"Frame #{i} evaluate note: {e}")
             continue
-    return page.main_frame
 
+    return page.main_frame
 
 def download_from_zinghr():
     log("==================================================")
     log("Starting ZingHR Super Employee Master Automation")
     log("==================================================")
-    
+
     if not ZING_USERNAME or not ZING_PASSWORD:
         log("ERROR: ZING_USERNAME or ZING_PASSWORD secret is missing or empty!")
         sys.exit(1)
 
     ensure_output_dir(LOCAL_FILE_PATH)
-    log(f"Navigating to ZingHR login portal: {LOGIN_URL}")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -64,12 +64,15 @@ def download_from_zinghr():
         )
         context = browser.new_context(
             accept_downloads=True,
-            viewport={"width": 1440, "height": 900},
+            viewport={"width": 1600, "height": 1000},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         )
         page = context.new_page()
 
-        # 1. Login sequence
+        # ----------------------------------------------------
+        # 1. LOGIN
+        # ----------------------------------------------------
+        log(f"Navigating to ZingHR login portal: {LOGIN_URL}")
         page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(3000)
 
@@ -91,87 +94,140 @@ def download_from_zinghr():
             page.locator("a[id*='Login'], a[id*='btn'], input[type='submit'], button[type='submit']").first.click(timeout=10000)
 
         page.wait_for_load_state("domcontentloaded", timeout=60000)
-        page.wait_for_timeout(6000)
-        log("Login complete.")
+        page.wait_for_timeout(8000)
+        log(f"Login complete. Current URL: {page.url}")
 
-        # 2. Navigate to Reports Gallery
-        log(f"Navigating to Reports Gallery: {REPORTS_VIEW_URL}")
+        # ----------------------------------------------------
+        # 2. NAVIGATE TO REPORTS GALLERY
+        # ----------------------------------------------------
+        log(f"Navigating directly to Reports Gallery: {REPORTS_VIEW_URL}")
         page.goto(REPORTS_VIEW_URL, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(6000)
-
-        target_frame = get_active_reports_frame(page)
-
-        # 3. Ensure 'Current Data' tab
-        log("Ensuring 'Current Data' tab is selected...")
+        
+        # Wait up to 15 seconds for network activity to settle
         try:
-            target_frame.evaluate("""() => {
-                const tabs = Array.from(document.querySelectorAll('a, span, li'));
-                for (const t of tabs) {
-                    if (t.innerText && t.innerText.includes('Current Data')) {
-                        t.click();
-                        break;
-                    }
+            page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass
+        page.wait_for_timeout(8000)
+
+        log(f"Post-navigation URL: {page.url}")
+        page.screenshot(path="downloads/reports_gallery_loaded.png")
+
+        # ----------------------------------------------------
+        # 3. IDENTIFY TARGET FRAME
+        # ----------------------------------------------------
+        target_frame = find_reports_frame(page)
+
+        # ----------------------------------------------------
+        # 4. CLICK 'CURRENT DATA' TAB IF NOT ACTIVE
+        # ----------------------------------------------------
+        log("Ensuring 'Current Data' tab is active...")
+        target_frame.evaluate("""() => {
+            const tabs = Array.from(document.querySelectorAll('a, span, li, button'));
+            for (const t of tabs) {
+                if (t.innerText && t.innerText.trim() === 'Current Data') {
+                    t.click();
+                    break;
                 }
-            }""")
-        except Exception as e:
-            log(f"Tab note: {e}")
+            }
+        }""")
         page.wait_for_timeout(3000)
 
-        # 4. Search and select 'Super Employee Master'
-        log("Searching for 'Super Employee Master'...")
+        # ----------------------------------------------------
+        # 5. EXPAND 'EMPLOYEE MIS' & SELECT 'SUPER EMPLOYEE MASTER'
+        # ----------------------------------------------------
+        log("Expanding categories and selecting 'Super Employee Master'...")
+
+        # Step A: Attempt to expand all tree nodes and search
         target_frame.evaluate("""() => {
-            const inputs = Array.from(document.querySelectorAll("input[type='text'], input[placeholder*='search' i], #txtSearch"));
+            // Click any tree toggles / folders / plus icons
+            document.querySelectorAll('.tree-toggle, .fa-plus, .fa-folder, .accordion-toggle, [data-toggle="collapse"]').forEach(el => el.click());
+
+            // Type 'super' into the search input if present
+            const inputs = Array.from(document.querySelectorAll("input[type='text'], input[placeholder*='search' i], #txtSearch, input[id*='search' i]"));
             for (const input of inputs) {
-                if (input.offsetWidth > 0 && input.offsetHeight > 0) {
+                if (input.offsetParent !== null) {
                     input.value = 'super';
                     input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('keyup', { bubbles: true }));
                     input.dispatchEvent(new Event('change', { bubbles: true }));
                     break;
                 }
             }
-            const searchBtn = document.querySelector(".input-group-addon, .input-group-btn, [id*='btnSearch'], button:has(.fa-search), a:has(.fa-search), .fa-search");
-            if (searchBtn) {
-                (searchBtn.closest('button') || searchBtn.closest('a') || searchBtn).click();
-            }
 
-            document.querySelectorAll('a, li, div, span, h4, h5').forEach(el => {
-                if (el.textContent && el.textContent.includes('Employee MIS')) {
-                    el.click();
-                }
-            });
+            // Click search magnifying button
+            const btn = document.querySelector(".input-group-addon, .input-group-btn, [id*='btnSearch'], button:has(.fa-search), a:has(.fa-search), .fa-search");
+            if (btn) (btn.closest('button') || btn.closest('a') || btn).click();
         }""")
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(4000)
 
-        selected = target_frame.evaluate("""() => {
-            const items = Array.from(document.querySelectorAll('a, li, span, div'));
-            for (const item of items) {
-                const txt = item.textContent ? item.textContent.trim() : '';
-                if (txt.includes('Super Employee Master') && !txt.includes('With CTC')) {
-                    const target = item.closest('a') || item.closest('li') || item;
-                    target.scrollIntoView();
-                    target.click();
+        # Step B: Click 'Super Employee Master' item
+        log("Clicking 'Super Employee Master'...")
+        clicked = target_frame.evaluate("""() => {
+            const candidates = Array.from(document.querySelectorAll('a, li, span, div, p'));
+            for (const el of candidates) {
+                const txt = el.innerText ? el.innerText.trim() : '';
+                // Match Super Employee Master, ignore 'With CTC'
+                if (txt.includes('Super Employee Master') && !txt.includes('CTC')) {
+                    const clickable = el.closest('a') || el.closest('li') || el;
+                    clickable.scrollIntoView();
+                    clickable.click();
+                    
+                    // If href has javascript, evaluate it
+                    if (clickable.href && clickable.href.startsWith('javascript:')) {
+                        const code = decodeURIComponent(clickable.href.replace('javascript:', ''));
+                        try { eval(code); } catch(e) {}
+                    }
                     return true;
                 }
             }
             return false;
         }""")
 
-        if not selected:
-            log("Using fallback XPath locator for report...")
-            target_frame.locator("xpath=//a[contains(., 'Super Employee Master') and not(contains(., 'With CTC'))] | //li[contains(., 'Super Employee Master') and not(contains(., 'With CTC'))]").first.click(timeout=20000)
+        if not clicked:
+            log("JS click did not trigger. Searching through all child frames for the element...")
+            found_in_subframe = False
+            for f in page.frames:
+                try:
+                    f_clicked = f.evaluate("""() => {
+                        const candidates = Array.from(document.querySelectorAll('a, li, span'));
+                        for (const el of candidates) {
+                            const txt = el.innerText ? el.innerText.trim() : '';
+                            if (txt.includes('Super Employee Master') && !txt.includes('CTC')) {
+                                (el.closest('a') || el).click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }""")
+                    if f_clicked:
+                        log(f"Clicked 'Super Employee Master' inside subframe: {f.name or f.url}")
+                        target_frame = f
+                        found_in_subframe = True
+                        break
+                except Exception:
+                    continue
 
-        log("Waiting for report parameters to hydrate...")
-        page.wait_for_timeout(5000)
+            if not found_in_subframe:
+                page.screenshot(path="downloads/debug_before_timeout.png")
+                raise RuntimeError("Could not find 'Super Employee Master' in any frame. Check downloads/debug_before_timeout.png")
 
-        # 5. Configure dropdowns (Status = ALL, Emp Code = ALL)
-        log("Configuring filters to 'All selected'...")
+        log("Super Employee Master selected. Waiting for report parameters to render...")
+        page.wait_for_timeout(6000)
+
+        # ----------------------------------------------------
+        # 6. CONFIGURE FILTERS (SELECT ALL)
+        # ----------------------------------------------------
+        log("Configuring filters ('Select time period & employees')...")
         target_frame.evaluate("""() => {
+            // Expand accordion
             document.querySelectorAll('a, div, span, h4, h5').forEach(el => {
                 if (el.textContent && el.textContent.includes('Select time period & employees')) {
                     el.click();
                 }
             });
 
+            // Open all multiselect dropdowns that don't have all selected
             const triggers = Array.from(document.querySelectorAll('a.dropdown-toggle, button.multiselect, a[class*="multiselect"], div[class*="dropdown"] > a'));
             triggers.forEach(t => {
                 const text = (t.textContent || t.innerText || '').toLowerCase();
@@ -180,6 +236,7 @@ def download_from_zinghr():
                 }
             });
 
+            // Check all select-all checkboxes
             document.querySelectorAll("input[type='checkbox']").forEach(chk => {
                 const val = (chk.value || chk.id || chk.name || '').toLowerCase();
                 const parent = (chk.parentElement ? chk.parentElement.textContent : '').toLowerCase();
@@ -188,6 +245,7 @@ def download_from_zinghr():
                 }
             });
 
+            // Close open dropdowns
             triggers.forEach(t => {
                 if (t.getAttribute('aria-expanded') === 'true') {
                     t.click();
@@ -196,8 +254,10 @@ def download_from_zinghr():
         }""")
         page.wait_for_timeout(3000)
 
-        # 6. Click 'Export to Excel'
-        log("Triggering 'Export to Excel'...")
+        # ----------------------------------------------------
+        # 7. TRIGGER 'EXPORT TO EXCEL'
+        # ----------------------------------------------------
+        log("Triggering 'Export to Excel' button...")
         exported = target_frame.evaluate("""() => {
             const btns = Array.from(document.querySelectorAll("input[type='submit'], input[type='button'], button, a"));
             for (const b of btns) {
@@ -220,10 +280,13 @@ def download_from_zinghr():
         if not exported:
             target_frame.locator("xpath=//input[contains(@value, 'Export to Excel')] | //button[contains(., 'Export to Excel')] | //a[contains(., 'Export to Excel')] | #btnExport").first.click(timeout=20000)
 
-        log("Export requested. Switching to Processed tab...")
+        log("Export requested. Waiting 6s before checking queue...")
         page.wait_for_timeout(6000)
 
-        # 7. Switch to 'Processed Saved Reports (All)'
+        # ----------------------------------------------------
+        # 8. SWITCH TO 'PROCESSED SAVED REPORTS (ALL)'
+        # ----------------------------------------------------
+        log("Switching to 'Processed Saved Reports (All)' tab...")
         target_frame.evaluate("""() => {
             const tabs = Array.from(document.querySelectorAll('a, span, li, button'));
             for (const tab of tabs) {
@@ -236,7 +299,9 @@ def download_from_zinghr():
         }""")
         page.wait_for_timeout(6000)
 
-        # 8. Polling loop
+        # ----------------------------------------------------
+        # 9. POLL QUEUE FOR DOWNLOAD READY (UP TO 7 MINUTES)
+        # ----------------------------------------------------
         log("Polling queue for download readiness (up to 7 mins)...")
         max_wait_seconds = 420
         poll_interval = 20
@@ -289,7 +354,9 @@ def download_from_zinghr():
             page.screenshot(path="downloads/timeout_queue.png")
             raise TimeoutError("Report processing timed out after 7 minutes.")
 
-        # 9. Download
+        # ----------------------------------------------------
+        # 10. DOWNLOAD FILE
+        # ----------------------------------------------------
         log("Downloading file...")
         with page.expect_download(timeout=180000) as download_info:
             target_frame.evaluate("""() => {
@@ -300,9 +367,8 @@ def download_from_zinghr():
 
         download = download_info.value
         download.save_as(LOCAL_FILE_PATH)
-        log(f"Saved successfully to: {LOCAL_FILE_PATH}")
+        log(f"Super Employee Master successfully downloaded and saved to: {LOCAL_FILE_PATH}")
         browser.close()
-
 
 def main():
     try:
@@ -310,7 +376,6 @@ def main():
     except Exception as e:
         log(f"Execution Error: {e}")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()
