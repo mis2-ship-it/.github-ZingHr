@@ -63,67 +63,88 @@ def download_from_zinghr():
         reports_view_url = "https://portal.zinghr.com/2015/Pages/ReportsGallery/ReportsView.aspx"
         print(f"Navigating directly to Reports Gallery: {reports_view_url}")
         page.goto(reports_view_url, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(6000)
 
-        # 3. Ensure 'Current Data' tab is active
+        # 3. Locate the Active Working Frame (Checks if page uses an iframe)
+        target_frame = page
+        for frame in page.frames:
+            try:
+                if frame.locator("text='Reports Gallery'").is_visible() or frame.locator("text='Current Data'").is_visible():
+                    target_frame = frame
+                    print(f"Located active Reports Gallery frame: {frame.name or 'unnamed_iframe'}")
+                    break
+            except Exception:
+                continue
+
+        # 4. Ensure 'Current Data' tab is active
         print("Ensuring 'Current Data' tab is selected...")
-        current_data_tab = page.get_by_text("Current Data", exact=False).first
+        current_data_tab = target_frame.get_by_text("Current Data", exact=False).first
         if current_data_tab.is_visible():
             current_data_tab.click()
             page.wait_for_timeout(2000)
 
-        # 4. Search and select 'Super Employee Master'
-        print("Filtering reports using left search box...")
-        search_box = page.locator("input[placeholder*='search' i], input[type='text']:visible, #txtSearch").first
-        search_box.fill("super")
-        search_box.press("Enter")
-        page.wait_for_timeout(2000)
+        # 5. Search or Directly Select 'Super Employee Master'
+        print("Locating 'Super Employee Master'...")
+        # Check if the search input is accessible
+        search_inputs = target_frame.locator("input[type='text'], input[placeholder*='search' i], #txtSearch, input[id*='search' i]")
+        if search_inputs.count() > 0:
+            try:
+                print("Typing 'super' into the search filter...")
+                search_box = search_inputs.first
+                search_box.fill("super")
+                search_box.press("Enter")
+                page.wait_for_timeout(2000)
+            except Exception as e:
+                print(f"Search box bypass: {e}")
 
-        search_btn = page.locator(".input-group-addon, .input-group-btn, button:has(.fa-search), a:has(.fa-search), .search-icon, #btnSearch").first
-        if search_btn.is_visible():
-            search_btn.click()
-            page.wait_for_timeout(2000)
+        # If Employee MIS accordion is present and collapsed, click to expand
+        emp_mis_header = target_frame.locator("text='Employee MIS'").first
+        if emp_mis_header.is_visible():
+            print("Expanding 'Employee MIS' accordion...")
+            try:
+                emp_mis_header.click()
+                page.wait_for_timeout(1500)
+            except Exception:
+                pass
 
-        print("Selecting 'Super Employee Master' from left menu...")
-        super_emp_item = page.locator("text='Super Employee Master'").first
+        # Click 'Super Employee Master'
+        print("Clicking 'Super Employee Master'...")
+        super_emp_item = target_frame.locator("text='Super Employee Master'").first
         super_emp_item.wait_for(state="visible", timeout=30000)
         super_emp_item.click()
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(4000)
 
-        # 5. Expand 'Select time period & employees' if needed
-        time_period_header = page.locator("text='Select time period & employees'").first
+        # 6. Expand 'Select time period & employees' if needed
+        time_period_header = target_frame.locator("text='Select time period & employees'").first
         if time_period_header.is_visible():
-            # Ensure the accordion is expanded
-            if not page.locator("text='Show me reports for Status'").is_visible():
+            if not target_frame.locator("text='Show me reports for Status'").is_visible():
                 time_period_header.click()
                 page.wait_for_timeout(1500)
 
-        # 6. Configure 'Show me reports for Status' -> Select All
-        print("Configuring Status dropdown to 'Select All'...")
-        status_dropdown = page.locator("xpath=//span[contains(text(), 'Show me reports for Status') or contains(text(), 'Status')]/following::a[1] | //div[contains(., 'Status')]//button | //div[contains(., 'Status')]//a[contains(@class,'dropdown')]").first
+        # 7. Configure 'Show me reports for Status' -> Select All
+        print("Checking Status dropdown...")
+        status_dropdown = target_frame.locator("xpath=//span[contains(text(), 'Show me reports for Status') or contains(text(), 'Status')]/following::a[1] | //div[contains(., 'Status')]//button | //div[contains(., 'Status')]//a[contains(@class,'dropdown')]").first
         if status_dropdown.is_visible():
             status_text = status_dropdown.inner_text()
             if "all selected" not in status_text.lower():
                 status_dropdown.click()
                 page.wait_for_timeout(1000)
-                # Click 'Select all' inside the opened multi-select popup
-                select_all_chk = page.locator("input[type='checkbox'][value*='multiselect-all'], label:has-text('Select all'), input[id*='chkAll']").first
+                select_all_chk = target_frame.locator("input[type='checkbox'][value*='multiselect-all'], label:has-text('Select all'), input[id*='chkAll']").first
                 if select_all_chk.is_visible():
                     select_all_chk.check()
                     page.wait_for_timeout(1000)
-                # Close dropdown popup
                 status_dropdown.click()
                 page.wait_for_timeout(1000)
 
-        # 7. Configure 'for Employee Code' -> Select All
-        print("Configuring Employee Code dropdown to 'Select All'...")
-        emp_code_dropdown = page.locator("xpath=//span[contains(text(), 'for Employee Code') or contains(text(), 'Employee Code')]/following::a[1] | //div[contains(., 'Employee Code')]//button | //div[contains(., 'Employee Code')]//a[contains(@class,'dropdown')]").first
+        # 8. Configure 'for Employee Code' -> Select All
+        print("Checking Employee Code dropdown...")
+        emp_code_dropdown = target_frame.locator("xpath=//span[contains(text(), 'for Employee Code') or contains(text(), 'Employee Code')]/following::a[1] | //div[contains(., 'Employee Code')]//button | //div[contains(., 'Employee Code')]//a[contains(@class,'dropdown')]").first
         if emp_code_dropdown.is_visible():
             emp_code_text = emp_code_dropdown.inner_text()
             if "all selected" not in emp_code_text.lower():
                 emp_code_dropdown.click()
                 page.wait_for_timeout(1000)
-                select_all_emp = page.locator("input[type='checkbox'][value*='multiselect-all'], label:has-text('Select all'), input[id*='chkAll']").first
+                select_all_emp = target_frame.locator("input[type='checkbox'][value*='multiselect-all'], label:has-text('Select all'), input[id*='chkAll']").first
                 if select_all_emp.is_visible():
                     select_all_emp.check()
                     page.wait_for_timeout(1000)
@@ -132,33 +153,33 @@ def download_from_zinghr():
 
         page.wait_for_timeout(2000)
 
-        # 8. Click 'Export to Excel'
+        # 9. Click 'Export to Excel'
         print("Clicking 'Export to Excel' button...")
-        export_btn = page.locator("#btnExport, button:has-text('Export to Excel'), input[value*='Export to Excel'], a:has-text('Export to Excel')").first
+        export_btn = target_frame.locator("#btnExport, button:has-text('Export to Excel'), input[value*='Export to Excel'], a:has-text('Export to Excel')").first
         export_btn.wait_for(state="visible", timeout=30000)
         export_btn.click()
         page.wait_for_timeout(5000)
         print("Report generation requested successfully.")
 
-        # 9. Switch to 'Processed Saved Reports (All)' tab
+        # 10. Switch to 'Processed Saved Reports (All)' tab
         print("Switching to 'Processed Saved Reports' queue...")
-        processed_tab = page.get_by_text("Processed Saved Reports", exact=False).first
+        processed_tab = target_frame.get_by_text("Processed Saved Reports", exact=False).first
         processed_tab.wait_for(state="visible", timeout=30000)
         processed_tab.click()
         page.wait_for_timeout(5000)
 
-        # 10. Polling loop: Wait up to 7 minutes (420s) for the download arrow icon
+        # 11. Polling loop: Wait up to 7 minutes (420s) for the download arrow icon
         print("Waiting for report processing to complete (monitoring queue for up to 7 minutes)...")
         max_wait_seconds = 420
         poll_interval = 20
         elapsed = 0
         download_ready = False
 
-        download_icon = page.locator("table tbody tr:first-child a[title*='Download'], table tbody tr:first-child i[class*='download'], table tbody tr:first-child span[class*='download'], table tbody tr:first-child a:has(i), table tbody tr:first-child td:nth-child(5) a").first
+        download_icon = target_frame.locator("table tbody tr:first-child a[title*='Download'], table tbody tr:first-child i[class*='download'], table tbody tr:first-child span[class*='download'], table tbody tr:first-child a:has(i), table tbody tr:first-child td:nth-child(5) a").first
 
         while elapsed < max_wait_seconds:
             if download_icon.is_visible():
-                row_text = page.locator("table tbody tr:first-child").inner_text()
+                row_text = target_frame.locator("table tbody tr:first-child").inner_text()
                 if "xlsx" in row_text.lower() and "error" not in row_text.lower():
                     print(f"Download icon is ready! (Elapsed: {elapsed} seconds)")
                     download_ready = True
@@ -168,20 +189,19 @@ def download_from_zinghr():
             page.wait_for_timeout(poll_interval * 1000)
             elapsed += poll_interval
 
-            # Refresh / re-click the Processed tab to poll the latest status
             try:
                 processed_tab.click()
             except Exception:
                 page.reload(wait_until="domcontentloaded")
                 page.wait_for_timeout(3000)
-                processed_tab = page.get_by_text("Processed Saved Reports", exact=False).first
+                processed_tab = target_frame.get_by_text("Processed Saved Reports", exact=False).first
                 processed_tab.click()
 
         if not download_ready:
             page.screenshot(path="downloads/timeout_queue.png")
             raise TimeoutError("Report did not finish processing within 7 minutes.")
 
-        # 11. Trigger download from first row
+        # 12. Trigger download from first row
         print("Triggering download from the first row...")
         with page.expect_download(timeout=180000) as download_info:
             download_icon.click()
