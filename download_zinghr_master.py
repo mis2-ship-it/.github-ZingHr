@@ -98,20 +98,67 @@ def download_from_zinghr():
         log(f"Login complete. Current URL: {page.url}")
 
         # ----------------------------------------------------
-        # 2. NAVIGATE TO REPORTS GALLERY
+        # 2. NAVIGATE TO REPORTS GALLERY VIA PORTAL NAVIGATION
         # ----------------------------------------------------
-        log(f"Navigating directly to Reports Gallery: {REPORTS_VIEW_URL}")
-        page.goto(REPORTS_VIEW_URL, wait_until="domcontentloaded", timeout=60000)
-        
-        # Wait up to 15 seconds for network activity to settle
+        log(f"Login complete. Current URL: {page.url}")
+        page.wait_for_timeout(5000)
+
+        # Method A: Click Reports Gallery directly from the ZingNext navigation menu
+        log("Navigating to Reports Gallery via portal interface...")
+        navigated = False
         try:
-            page.wait_for_load_state("networkidle", timeout=15000)
-        except Exception:
-            pass
-        page.wait_for_timeout(8000)
+            # Look for menu icon / Reports link in ZingNext portal
+            reports_link = page.locator("a:has-text('Reports'), a:has-text('Report Gallery'), a:has-text('Reports Gallery'), [title*='Report' i], a[href*='ReportsView']").first
+            if reports_link.is_visible():
+                log("Found Reports menu item. Clicking...")
+                # If it opens in a new tab/window, capture it
+                with context.expect_page(timeout=10000) as new_page_info:
+                    reports_link.click()
+                new_page = new_page_info.value
+                new_page.wait_for_load_state("domcontentloaded")
+                page = new_page
+                navigated = True
+                log(f"Switched to Reports window: {page.url}")
+        except Exception as e:
+            log(f"Portal UI menu click note: {e}")
+
+        # Method B: If direct UI click didn't trigger, navigate via relative or legacy bridge
+        if not navigated or "AccessDenied" in page.url:
+            log("Attempting authenticated session navigation...")
+            # Navigate using the origin session rather than direct cold URL
+            page.evaluate("""() => {
+                const reportAnchor = Array.from(document.querySelectorAll('a, button, span, div')).find(el => {
+                    const txt = (el.innerText || el.textContent || '').toLowerCase();
+                    return txt.includes('report gallery') || txt.includes('reports gallery') || txt.includes('reports');
+                });
+                if (reportAnchor) {
+                    (reportAnchor.closest('a') || reportAnchor).click();
+                } else {
+                    window.location.href = '/2015/Pages/ReportsGallery/ReportsView.aspx';
+                }
+            }""")
+            page.wait_for_timeout(8000)
 
         log(f"Post-navigation URL: {page.url}")
         page.screenshot(path="downloads/reports_gallery_loaded.png")
+
+        # Check if AccessDenied was returned
+        if "AccessDenied" in page.url:
+            # Method C: Launch via the top-level app switcher / 9-dots menu if present
+            log("Access Denied on direct path. Attempting launch via App Switcher / Sidebar...")
+            page.goto("https://zingnext.zinghr.com/portal", wait_until="domcontentloaded")
+            page.wait_for_timeout(5000)
+            
+            # Click sidebar menu / app launcher
+            page.locator(".menu-icon, .hamburger, [class*='sidebar'], [class*='menu'], .fa-bars").first.click()
+            page.wait_for_timeout(2000)
+            
+            # Click Reports
+            with context.expect_page(timeout=15000) as new_page_info:
+                page.locator("text='Reports Gallery', text='Reports', a:has-text('Reports')").first.click()
+            page = new_page_info.value
+            page.wait_for_load_state("domcontentloaded")
+            log(f"Successfully arrived via sidebar at: {page.url}")
 
         # ----------------------------------------------------
         # 3. IDENTIFY TARGET FRAME
