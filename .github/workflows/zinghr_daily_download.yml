@@ -30,4 +30,4 @@ jobs:
         ZING_USERNAME: ${{ secrets.ZING_USERNAME }}
         ZING_PASSWORD: ${{ secrets.ZING_PASSWORD }}
         GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
-      run: python download_and_upload.py
+      run: python download_zinghr_master.py
