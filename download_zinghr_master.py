@@ -49,11 +49,16 @@ def download_from_zinghr():
 
         # 3. Password
         print("Entering Password...")
-        page.fill("input[id*='txtPassword'], input[type='password']", ZING_PASSWORD)
+        pwd_field = page.locator("input[id*='txtPassword'], input[type='password']").first
+        pwd_field.fill(ZING_PASSWORD)
 
-        # 4. Submit
-        print("Submitting login credentials...")
-        page.click("input[id*='btnLogin'], input[id*='btnSignIn'], button[type='submit']")
+        # 4. Submit (Press Enter directly in the password field)
+        print("Submitting login credentials via Enter key...")
+        try:
+            pwd_field.press("Enter")
+        except Exception:
+            # Fallback to common ZingHR login link/button element variants
+            page.click("a[id*='Login'], a[id*='btn'], input[type='submit'], button[type='submit'], .login-btn", timeout=10000)
         
         page.wait_for_load_state("domcontentloaded", timeout=60000)
         page.wait_for_timeout(5000)
