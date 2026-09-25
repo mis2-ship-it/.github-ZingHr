@@ -84,22 +84,97 @@ def download_from_zinghr():
                 continue
 
         # ----------------------------------------------------
-        # 4. SELECT 'SUPER EMPLOYEE MASTER' VIA DIRECT DOM CLICK
+        # 4. FILTER AND CLICK 'SUPER EMPLOYEE MASTER'
         # ----------------------------------------------------
-        print("Selecting 'Super Employee Master' using direct DOM execution...")
-        selected = active_scope.evaluate("""() => {
-            // First, expand all collapsed accordions/sections
-            document.querySelectorAll('.accordion, .panel-heading, [data-toggle="collapse"], a, div').forEach(el => {
-                if (el.innerText && el.innerText.includes('Employee MIS')) {
+        print("Filtering and selecting 'Super Employee Master'...")
+        # Step A: Filter by typing 'super' in the left search box
+        active_scope.evaluate("""() => {
+            const inputs = Array.from(document.querySelectorAll("input[type='text'], input[placeholder*='search' i], #txtSearch"));
+            for (const input of inputs) {
+                if (input.offsetParent !== null) { // visible input
+                    input.value = 'super';
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                    break;
+                }
+            }
+            const btn = document.querySelector(".input-group-addon, .input-group-btn, [id*='btnSearch'], button, a:has(.fa-search)");
+            if (btn) btn.click();
+        }""")
+        page.wait_for_timeout(3000)
+
+        # Step B: Click 'Super Employee Master' item
+        clicked_item = active_scope.evaluate("""() => {
+            const items = Array.from(document.querySelectorAll('a, li, div, span'));
+            for (const item of items) {
+                const txt = item.innerText ? item.innerText.trim() : '';
+                if (txt.startsWith('Super Employee Master') && !txt.includes('With CTC')) {
+                    item.scrollIntoView();
+                    item.click();
+                    return true;
+                }
+            }
+            return false;
+        }""")
+
+        if not clicked_item:
+            # Fallback direct locator click
+            page.locator("text='Super Employee Master'").first.click(timeout=15000)
+
+        print("Waiting for ASP.NET AJAX UpdatePanel to load Super Employee Master view...")
+        # CRITICAL: Wait until the right panel header updates to 'Super Employee Master'
+        page.wait_for_selector("xpath=//h1[contains(., 'Super Employee Master')] | //h2[contains(., 'Super Employee Master')] | //h3[contains(., 'Super Employee Master')] | //div[contains(@class,'title') and contains(., 'Super Employee Master')] | //span[contains(., 'Super Employee Master')]", timeout=30000)
+        page.wait_for_timeout(4000)
+
+        # ----------------------------------------------------
+        # 5. CONFIGURE FILTERS ('Select time period & employees')
+        # ----------------------------------------------------
+        print("Checking and selecting dropdown filters...")
+        active_scope.evaluate("""() => {
+            // Expand accordion if needed
+            document.querySelectorAll('a, div, span').forEach(el => {
+                if (el.innerText && el.innerText.includes('Select time period & employees')) {
                     el.click();
                 }
             });
 
-            // Find any element whose direct text contains 'Super Employee Master' (avoiding 'With CTC')
-            const allElements = Array.from(document.querySelectorAll('a, li, div, span, p, h4, h5'));
-            for (const el of allElements) {
-                const text = el.innerText ? el.innerText.trim() : '';
-                if (text.startsWith('Super Employee Master') && !text.includes('With CTC')) {
+            // Open any multi-select dropdowns that are not 'All selected'
+            const triggers = Array.from(document.querySelectorAll('a.dropdown-toggle, button.multiselect, a[class*="multiselect"], div[class*="dropdown"] > a'));
+            triggers.forEach(t => {
+                if (t.innerText && !t.innerText.toLowerCase().includes('all selected')) {
+                    t.click();
+                }
+            });
+
+            // Check all 'multiselect-all' or select-all checkboxes
+            document.querySelectorAll("input[type='checkbox']").forEach(chk => {
+                const val = (chk.value || chk.id || chk.name || '').toLowerCase();
+                const parent = (chk.parentElement ? chk.parentElement.innerText : '').toLowerCase();
+                if (val.includes('multiselect-all') || val.includes('chkall') || parent.includes('select all')) {
+                    if (!chk.checked) chk.click();
+                }
+            });
+
+            // Close triggers
+            triggers.forEach(t => {
+                if (t.getAttribute('aria-expanded') === 'true') t.click();
+            });
+        }""")
+        page.wait_for_timeout(3000)
+
+        # ----------------------------------------------------
+        # 6. TRIGGER 'EXPORT TO EXCEL'
+        # ----------------------------------------------------
+        print("Locating and clicking 'Export to Excel' button...")
+        # First ensure it's visible in the DOM
+        page.wait_for_selector("xpath=//input[contains(@value, 'Export to Excel')] | //button[contains(., 'Export to Excel')] | //a[contains(., 'Export to Excel')]", timeout=30000)
+        
+        # Click via JavaScript directly to bypass any click-interception or overlays
+        active_scope.evaluate("""() => {
+            const targets = Array.from(document.querySelectorAll("input[type='submit'], input[type='button'], button, a"));
+            for (const el of targets) {
+                const text = (el.value || el.innerText || '').toLowerCase();
+                if (text.includes('export to excel')) {
                     el.scrollIntoView();
                     el.click();
                     return true;
@@ -107,116 +182,24 @@ def download_from_zinghr():
             }
             return false;
         }""")
-
-        # Fallback if DOM search didn't find it: type 'super' in search box and click magnifying glass
-        if not selected:
-            print("Direct click not triggered; using search box filter...")
-            active_scope.evaluate("""() => {
-                const inputs = Array.from(document.querySelectorAll("input[type='text'], input[placeholder*='search' i], #txtSearch"));
-                if (inputs.length > 0) {
-                    inputs[0].value = 'super';
-                    inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
-                    inputs[0].dispatchEvent(new Event('change', { bubbles: true }));
-                }
-                const btn = document.querySelector(".input-group-addon, .input-group-btn, [id*='btnSearch'], button, a:has(.fa-search)");
-                if (btn) btn.click();
-            }""")
-            page.wait_for_timeout(3000)
-
-            # Retry clicking 'Super Employee Master'
-            active_scope.evaluate("""() => {
-                const els = Array.from(document.querySelectorAll('a, li, div, span'));
-                for (const el of els) {
-                    if (el.innerText && el.innerText.trim().startsWith('Super Employee Master') && !el.innerText.includes('CTC')) {
-                        el.click();
-                        break;
-                    }
-                }
-            }""")
-
-        page.wait_for_timeout(4000)
-        print("Super Employee Master selected.")
+        print("Export to Excel successfully clicked. Waiting 6s for generation request...")
+        page.wait_for_timeout(6000)
 
         # ----------------------------------------------------
-        # 5. EXPAND OPTIONS & CONFIGURE DROPDOWNS (SELECT ALL)
+        # 7. SWITCH TO 'PROCESSED SAVED REPORTS (ALL)'
         # ----------------------------------------------------
-        print("Configuring 'Select time period & employees' filters...")
-        active_scope.evaluate("""() => {
-            // 1. Expand accordion if collapsed
-            const accordions = Array.from(document.querySelectorAll('a, div, span, h4, h5'));
-            for (const acc of accordions) {
-                if (acc.innerText && acc.innerText.includes('Select time period & employees')) {
-                    acc.click();
-                    break;
-                }
-            }
-        }""")
-        page.wait_for_timeout(2000)
-
-        # Set Status and Employee Code multi-selects to 'All'
-        active_scope.evaluate("""() => {
-            // Find dropdown buttons/links for Status & Employee Code
-            const dropTriggers = Array.from(document.querySelectorAll('a.dropdown-toggle, button.multiselect, a[class*="multiselect"], div[class*="multiselect"]'));
-            dropTriggers.forEach(trigger => {
-                if (!trigger.innerText.toLowerCase().includes('all selected')) {
-                    trigger.click();
-                }
-            });
-
-            // Check all 'Select all' checkboxes
-            const chks = Array.from(document.querySelectorAll('input[type="checkbox"][value*="multiselect-all"], input[type="checkbox"][id*="chkAll"], .multiselect-all input'));
-            chks.forEach(chk => {
-                if (!chk.checked) {
-                    chk.click();
-                }
-            });
-
-            // Close open dropdown popups
-            dropTriggers.forEach(trigger => trigger.click());
-        }""")
-        page.wait_for_timeout(2000)
-
-        # ----------------------------------------------------
-        # 6. CLICK 'EXPORT TO EXCEL'
-        # ----------------------------------------------------
-        print("Triggering 'Export to Excel'...")
-        export_clicked = active_scope.evaluate("""() => {
-            const buttons = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], a'));
-            for (const b of buttons) {
-                const val = (b.value || b.innerText || '').toLowerCase();
-                if (val.includes('export to excel')) {
-                    b.click();
-                    return true;
-                }
-            }
-            const exportById = document.getElementById('btnExport');
-            if (exportById) {
-                exportById.click();
-                return true;
-            }
-            return false;
-        }""")
-
-        if not export_clicked:
-            active_scope.locator("#btnExport, button:has-text('Export to Excel'), a:has-text('Export to Excel')").first.click(timeout=15000)
-
-        print("Export to Excel triggered. Waiting 5s before switching to Processed tab...")
-        page.wait_for_timeout(5000)
-
-        # ----------------------------------------------------
-        # 7. SWITCH TO 'PROCESSED SAVED REPORTS (ALL)' TAB
-        # ----------------------------------------------------
-        print("Navigating to 'Processed Saved Reports (All)'...")
+        print("Switching to 'Processed Saved Reports (All)' tab...")
         active_scope.evaluate("""() => {
             const tabs = Array.from(document.querySelectorAll('a, span, li, button'));
             for (const tab of tabs) {
                 if (tab.innerText && tab.innerText.includes('Processed Saved Reports')) {
+                    tab.scrollIntoView();
                     tab.click();
                     break;
                 }
             }
         }""")
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(10000)
 
         # ----------------------------------------------------
         # 8. POLLING LOOP: WAIT 5-6 MINUTES FOR DOWNLOAD ARROW ICON
