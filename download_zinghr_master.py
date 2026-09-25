@@ -34,7 +34,9 @@ def download_from_zinghr():
         )
         page = context.new_page()
 
-        # 1. Login sequence
+        # ----------------------------------------------------
+        # 1. LOGIN
+        # ----------------------------------------------------
         page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(3000)
 
@@ -59,156 +61,232 @@ def download_from_zinghr():
         page.wait_for_timeout(6000)
         print("Login complete.")
 
-        # 2. Direct jump to Reports Gallery
+        # ----------------------------------------------------
+        # 2. OPEN REPORTS GALLERY & WAIT FOR HYDRATION
+        # ----------------------------------------------------
         reports_view_url = "https://portal.zinghr.com/2015/Pages/ReportsGallery/ReportsView.aspx"
         print(f"Navigating directly to Reports Gallery: {reports_view_url}")
-        page.goto(reports_view_url, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(6000)
+        page.goto(reports_view_url, wait_until="networkidle", timeout=60000)
+        page.wait_for_timeout(5000)
 
-        # 3. Locate the Active Working Frame (Checks if page uses an iframe)
-        target_frame = page
+        # ----------------------------------------------------
+        # 3. LOCATE ACTIVE FRAME (MAIN PAGE OR EMBEDDED IFRAME)
+        # ----------------------------------------------------
+        active_scope = page
         for frame in page.frames:
             try:
-                if frame.locator("text='Reports Gallery'").is_visible() or frame.locator("text='Current Data'").is_visible():
-                    target_frame = frame
-                    print(f"Located active Reports Gallery frame: {frame.name or 'unnamed_iframe'}")
+                has_reports = frame.evaluate("() => document.body.innerText.includes('Reports Gallery') || document.body.innerText.includes('Super Employee Master') || document.body.innerText.includes('Current Data')")
+                if has_reports:
+                    active_scope = frame
+                    print(f"Target frame identified: {frame.name or 'embedded_frame'}")
                     break
             except Exception:
                 continue
 
-        # 4. Ensure 'Current Data' tab is active
-        print("Ensuring 'Current Data' tab is selected...")
-        current_data_tab = target_frame.get_by_text("Current Data", exact=False).first
-        if current_data_tab.is_visible():
-            current_data_tab.click()
-            page.wait_for_timeout(2000)
+        # ----------------------------------------------------
+        # 4. SELECT 'SUPER EMPLOYEE MASTER' VIA DIRECT DOM CLICK
+        # ----------------------------------------------------
+        print("Selecting 'Super Employee Master' using direct DOM execution...")
+        selected = active_scope.evaluate("""() => {
+            // First, expand all collapsed accordions/sections
+            document.querySelectorAll('.accordion, .panel-heading, [data-toggle="collapse"], a, div').forEach(el => {
+                if (el.innerText && el.innerText.includes('Employee MIS')) {
+                    el.click();
+                }
+            });
 
-        # 5. Search or Directly Select 'Super Employee Master'
-        print("Locating 'Super Employee Master'...")
-        # Check if the search input is accessible
-        search_inputs = target_frame.locator("input[type='text'], input[placeholder*='search' i], #txtSearch, input[id*='search' i]")
-        if search_inputs.count() > 0:
-            try:
-                print("Typing 'super' into the search filter...")
-                search_box = search_inputs.first
-                search_box.fill("super")
-                search_box.press("Enter")
-                page.wait_for_timeout(2000)
-            except Exception as e:
-                print(f"Search box bypass: {e}")
+            // Find any element whose direct text contains 'Super Employee Master' (avoiding 'With CTC')
+            const allElements = Array.from(document.querySelectorAll('a, li, div, span, p, h4, h5'));
+            for (const el of allElements) {
+                const text = el.innerText ? el.innerText.trim() : '';
+                if (text.startsWith('Super Employee Master') && !text.includes('With CTC')) {
+                    el.scrollIntoView();
+                    el.click();
+                    return true;
+                }
+            }
+            return false;
+        }""")
 
-        # If Employee MIS accordion is present and collapsed, click to expand
-        emp_mis_header = target_frame.locator("text='Employee MIS'").first
-        if emp_mis_header.is_visible():
-            print("Expanding 'Employee MIS' accordion...")
-            try:
-                emp_mis_header.click()
-                page.wait_for_timeout(1500)
-            except Exception:
-                pass
+        # Fallback if DOM search didn't find it: type 'super' in search box and click magnifying glass
+        if not selected:
+            print("Direct click not triggered; using search box filter...")
+            active_scope.evaluate("""() => {
+                const inputs = Array.from(document.querySelectorAll("input[type='text'], input[placeholder*='search' i], #txtSearch"));
+                if (inputs.length > 0) {
+                    inputs[0].value = 'super';
+                    inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+                    inputs[0].dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                const btn = document.querySelector(".input-group-addon, .input-group-btn, [id*='btnSearch'], button, a:has(.fa-search)");
+                if (btn) btn.click();
+            }""")
+            page.wait_for_timeout(3000)
 
-        # Click 'Super Employee Master'
-        print("Clicking 'Super Employee Master'...")
-        super_emp_item = target_frame.locator("text='Super Employee Master'").first
-        super_emp_item.wait_for(state="visible", timeout=30000)
-        super_emp_item.click()
+            # Retry clicking 'Super Employee Master'
+            active_scope.evaluate("""() => {
+                const els = Array.from(document.querySelectorAll('a, li, div, span'));
+                for (const el of els) {
+                    if (el.innerText && el.innerText.trim().startsWith('Super Employee Master') && !el.innerText.includes('CTC')) {
+                        el.click();
+                        break;
+                    }
+                }
+            }""")
+
         page.wait_for_timeout(4000)
+        print("Super Employee Master selected.")
 
-        # 6. Expand 'Select time period & employees' if needed
-        time_period_header = target_frame.locator("text='Select time period & employees'").first
-        if time_period_header.is_visible():
-            if not target_frame.locator("text='Show me reports for Status'").is_visible():
-                time_period_header.click()
-                page.wait_for_timeout(1500)
-
-        # 7. Configure 'Show me reports for Status' -> Select All
-        print("Checking Status dropdown...")
-        status_dropdown = target_frame.locator("xpath=//span[contains(text(), 'Show me reports for Status') or contains(text(), 'Status')]/following::a[1] | //div[contains(., 'Status')]//button | //div[contains(., 'Status')]//a[contains(@class,'dropdown')]").first
-        if status_dropdown.is_visible():
-            status_text = status_dropdown.inner_text()
-            if "all selected" not in status_text.lower():
-                status_dropdown.click()
-                page.wait_for_timeout(1000)
-                select_all_chk = target_frame.locator("input[type='checkbox'][value*='multiselect-all'], label:has-text('Select all'), input[id*='chkAll']").first
-                if select_all_chk.is_visible():
-                    select_all_chk.check()
-                    page.wait_for_timeout(1000)
-                status_dropdown.click()
-                page.wait_for_timeout(1000)
-
-        # 8. Configure 'for Employee Code' -> Select All
-        print("Checking Employee Code dropdown...")
-        emp_code_dropdown = target_frame.locator("xpath=//span[contains(text(), 'for Employee Code') or contains(text(), 'Employee Code')]/following::a[1] | //div[contains(., 'Employee Code')]//button | //div[contains(., 'Employee Code')]//a[contains(@class,'dropdown')]").first
-        if emp_code_dropdown.is_visible():
-            emp_code_text = emp_code_dropdown.inner_text()
-            if "all selected" not in emp_code_text.lower():
-                emp_code_dropdown.click()
-                page.wait_for_timeout(1000)
-                select_all_emp = target_frame.locator("input[type='checkbox'][value*='multiselect-all'], label:has-text('Select all'), input[id*='chkAll']").first
-                if select_all_emp.is_visible():
-                    select_all_emp.check()
-                    page.wait_for_timeout(1000)
-                emp_code_dropdown.click()
-                page.wait_for_timeout(1000)
-
+        # ----------------------------------------------------
+        # 5. EXPAND OPTIONS & CONFIGURE DROPDOWNS (SELECT ALL)
+        # ----------------------------------------------------
+        print("Configuring 'Select time period & employees' filters...")
+        active_scope.evaluate("""() => {
+            // 1. Expand accordion if collapsed
+            const accordions = Array.from(document.querySelectorAll('a, div, span, h4, h5'));
+            for (const acc of accordions) {
+                if (acc.innerText && acc.innerText.includes('Select time period & employees')) {
+                    acc.click();
+                    break;
+                }
+            }
+        }""")
         page.wait_for_timeout(2000)
 
-        # 9. Click 'Export to Excel'
-        print("Clicking 'Export to Excel' button...")
-        export_btn = target_frame.locator("#btnExport, button:has-text('Export to Excel'), input[value*='Export to Excel'], a:has-text('Export to Excel')").first
-        export_btn.wait_for(state="visible", timeout=30000)
-        export_btn.click()
-        page.wait_for_timeout(5000)
-        print("Report generation requested successfully.")
+        # Set Status and Employee Code multi-selects to 'All'
+        active_scope.evaluate("""() => {
+            // Find dropdown buttons/links for Status & Employee Code
+            const dropTriggers = Array.from(document.querySelectorAll('a.dropdown-toggle, button.multiselect, a[class*="multiselect"], div[class*="multiselect"]'));
+            dropTriggers.forEach(trigger => {
+                if (!trigger.innerText.toLowerCase().includes('all selected')) {
+                    trigger.click();
+                }
+            });
 
-        # 10. Switch to 'Processed Saved Reports (All)' tab
-        print("Switching to 'Processed Saved Reports' queue...")
-        processed_tab = target_frame.get_by_text("Processed Saved Reports", exact=False).first
-        processed_tab.wait_for(state="visible", timeout=30000)
-        processed_tab.click()
+            // Check all 'Select all' checkboxes
+            const chks = Array.from(document.querySelectorAll('input[type="checkbox"][value*="multiselect-all"], input[type="checkbox"][id*="chkAll"], .multiselect-all input'));
+            chks.forEach(chk => {
+                if (!chk.checked) {
+                    chk.click();
+                }
+            });
+
+            // Close open dropdown popups
+            dropTriggers.forEach(trigger => trigger.click());
+        }""")
+        page.wait_for_timeout(2000)
+
+        # ----------------------------------------------------
+        # 6. CLICK 'EXPORT TO EXCEL'
+        # ----------------------------------------------------
+        print("Triggering 'Export to Excel'...")
+        export_clicked = active_scope.evaluate("""() => {
+            const buttons = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], a'));
+            for (const b of buttons) {
+                const val = (b.value || b.innerText || '').toLowerCase();
+                if (val.includes('export to excel')) {
+                    b.click();
+                    return true;
+                }
+            }
+            const exportById = document.getElementById('btnExport');
+            if (exportById) {
+                exportById.click();
+                return true;
+            }
+            return false;
+        }""")
+
+        if not export_clicked:
+            active_scope.locator("#btnExport, button:has-text('Export to Excel'), a:has-text('Export to Excel')").first.click(timeout=15000)
+
+        print("Export to Excel triggered. Waiting 5s before switching to Processed tab...")
         page.wait_for_timeout(5000)
 
-        # 11. Polling loop: Wait up to 7 minutes (420s) for the download arrow icon
-        print("Waiting for report processing to complete (monitoring queue for up to 7 minutes)...")
-        max_wait_seconds = 420
-        poll_interval = 20
+        # ----------------------------------------------------
+        # 7. SWITCH TO 'PROCESSED SAVED REPORTS (ALL)' TAB
+        # ----------------------------------------------------
+        print("Navigating to 'Processed Saved Reports (All)'...")
+        active_scope.evaluate("""() => {
+            const tabs = Array.from(document.querySelectorAll('a, span, li, button'));
+            for (const tab of tabs) {
+                if (tab.innerText && tab.innerText.includes('Processed Saved Reports')) {
+                    tab.click();
+                    break;
+                }
+            }
+        }""")
+        page.wait_for_timeout(5000)
+
+        # ----------------------------------------------------
+        # 8. POLLING LOOP: WAIT 5-6 MINUTES FOR DOWNLOAD ARROW ICON
+        # ----------------------------------------------------
+        print("Waiting for report generation to complete in the queue (polling up to 7 minutes)...")
+        max_wait_seconds = 420  # 7 minutes
+        poll_interval = 20      # re-check every 20 seconds
         elapsed = 0
         download_ready = False
 
-        download_icon = target_frame.locator("table tbody tr:first-child a[title*='Download'], table tbody tr:first-child i[class*='download'], table tbody tr:first-child span[class*='download'], table tbody tr:first-child a:has(i), table tbody tr:first-child td:nth-child(5) a").first
-
         while elapsed < max_wait_seconds:
-            if download_icon.is_visible():
-                row_text = target_frame.locator("table tbody tr:first-child").inner_text()
-                if "xlsx" in row_text.lower() and "error" not in row_text.lower():
-                    print(f"Download icon is ready! (Elapsed: {elapsed} seconds)")
-                    download_ready = True
-                    break
+            is_ready = active_scope.evaluate("""() => {
+                const firstRow = document.querySelector('table tbody tr:first-child');
+                if (!firstRow) return false;
 
-            print(f"Still processing... ({elapsed}s / {max_wait_seconds}s). Refreshing Processed queue...")
+                const text = firstRow.innerText.toLowerCase();
+                // If it contains error, abort
+                if (text.includes('error')) return 'error';
+
+                // Look for the download link/icon () in the 5th column or within the row
+                const downloadLink = firstRow.querySelector('a[title*="Download"], i.fa-download, i[class*="download"], a:has(i)');
+                if (downloadLink && text.includes('xlsx')) {
+                    return true;
+                }
+                return false;
+            }""")
+
+            if is_ready == 'error':
+                raise RuntimeError("ZingHR server reported an error processing this report.")
+
+            if is_ready is True:
+                print(f"Download icon is ready! (Elapsed: {elapsed} seconds)")
+                download_ready = True
+                break
+
+            print(f"Report is still processing in ZingHR queue ({elapsed}s / {max_wait_seconds}s). Re-checking in {poll_interval}s...")
             page.wait_for_timeout(poll_interval * 1000)
             elapsed += poll_interval
 
-            try:
-                processed_tab.click()
-            except Exception:
-                page.reload(wait_until="domcontentloaded")
-                page.wait_for_timeout(3000)
-                processed_tab = target_frame.get_by_text("Processed Saved Reports", exact=False).first
-                processed_tab.click()
+            # Click 'Processed Saved Reports' tab again to refresh the table status
+            active_scope.evaluate("""() => {
+                const tabs = Array.from(document.querySelectorAll('a, span, li'));
+                for (const t of tabs) {
+                    if (t.innerText && t.innerText.includes('Processed Saved Reports')) {
+                        t.click();
+                        break;
+                    }
+                }
+            }""")
 
         if not download_ready:
             page.screenshot(path="downloads/timeout_queue.png")
             raise TimeoutError("Report did not finish processing within 7 minutes.")
 
-        # 12. Trigger download from first row
-        print("Triggering download from the first row...")
+        # ----------------------------------------------------
+        # 9. TRIGGER DOWNLOAD FROM FIRST ROW
+        # ----------------------------------------------------
+        print("Initiating file download from row 1...")
         with page.expect_download(timeout=180000) as download_info:
-            download_icon.click()
+            active_scope.evaluate("""() => {
+                const firstRow = document.querySelector('table tbody tr:first-child');
+                const downloadLink = firstRow.querySelector('a[title*="Download"], i.fa-download, i[class*="download"], a:has(i), td:nth-child(5) a');
+                if (downloadLink) {
+                    downloadLink.click();
+                }
+            }""")
 
         download = download_info.value
         download.save_as(LOCAL_FILE_PATH)
-        print(f"File successfully downloaded and saved to: {LOCAL_FILE_PATH}")
+        print(f"Super Employee Master successfully downloaded and saved to: {LOCAL_FILE_PATH}")
         browser.close()
 
 def upload_to_google_drive():
